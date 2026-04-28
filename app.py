@@ -162,6 +162,35 @@ OCCASION_STYLES = {
     'work': ['Formal', 'Smart Casual']
 }
 
+# Blur detection threshold (Laplacian variance). Images with a score below
+# this value are considered too blurry for reliable skin-tone analysis.
+# Webcam captures (640×480, JPEG-compressed) score lower than high-res uploads
+# even when sharp, so 60 is chosen to avoid false positives on camera captures
+# while still rejecting genuinely blurry images (which typically score < 40).
+# Tune this constant if needed — lower values are more lenient, higher stricter.
+BLUR_THRESHOLD = 60
+
+# Normalise images wider than this before computing the blur score so that
+# very high-resolution uploads don't skew results relative to webcam frames.
+_BLUR_NORM_WIDTH = 800
+
+
+def check_image_blur(img):
+    """Return (is_blurry, score) using the Laplacian variance method.
+
+    A low variance means the image has few edges, i.e. it is blurry.
+    Large images are resized down to _BLUR_NORM_WIDTH before scoring so the
+    metric is comparable across webcam captures and high-res file uploads.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    if w > _BLUR_NORM_WIDTH:
+        scale = _BLUR_NORM_WIDTH / w
+        gray = cv2.resize(gray, (_BLUR_NORM_WIDTH, int(h * scale)),
+                          interpolation=cv2.INTER_AREA)
+    score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return score < BLUR_THRESHOLD, score
+
 
 class HeadlessSkinToneDetector:
     """Skin tone detector that works with uploaded images"""
@@ -253,6 +282,7 @@ class HeadlessSkinToneDetector:
         return None, None
 
     def classify_skin_tone(self, hsv_values):
+        print(hsv_values)
         if hsv_values is None:
             return "Medium"
         
@@ -602,7 +632,19 @@ def analyze_image():
         
         if img is None:
             return jsonify({'success': False, 'message': 'Could not decode image'}), 400
-        
+
+        # Blur detection gate — must pass before any further processing
+        is_blurry, blur_score = check_image_blur(img)
+        if is_blurry:
+            return jsonify({
+                'success': False,
+                'error_type': 'blur',
+                'message': (
+                    'The image appears to be blurry. '
+                    'Please retake or re-upload a clearer photo for accurate recommendations.'
+                )
+            }), 400
+
         result = detector.process_image(img)
         
         if result['success']:
@@ -765,4 +807,5 @@ def save_profile():
 
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
