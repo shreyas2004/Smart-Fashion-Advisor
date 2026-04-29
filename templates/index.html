@@ -1932,6 +1932,10 @@
 
                 <div class="preview-container" id="preview-container">
                     <img id="preview-image" src="" alt="Preview">
+                    <div id="blur-error-banner" style="display:none; margin: 14px auto 0; max-width: 420px; background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.5); border-radius: 10px; padding: 12px 16px; color: #ff6b7a; font-size: 0.9rem; text-align: center;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
+                        <span id="blur-error-text"></span>
+                    </div>
                     <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px;">
                         <button class="btn btn-primary" id="btn-analyze">
                             <i class="fas fa-magic"></i> Analyze Skin Tone
@@ -2443,6 +2447,8 @@
             previewContainer.classList.remove('active');
             document.querySelector('.photo-options').style.display = 'grid';
             fileInput.value = '';
+            // Clear blur error if it was showing
+            document.getElementById('blur-error-banner').style.display = 'none';
         });
 
         function stopCamera() {
@@ -2463,37 +2469,47 @@
 
         btnAnalyze.addEventListener('click', async () => {
             if (!state.imageData) return;
-            
+
+            // Clear any previous blur error
+            const blurBanner = document.getElementById('blur-error-banner');
+            const blurErrorText = document.getElementById('blur-error-text');
+            blurBanner.style.display = 'none';
+
             previewContainer.classList.remove('active');
             analyzeLoader.classList.add('active');
-            
+
             try {
                 const formData = new FormData();
                 formData.append('image_data', state.imageData);
-                
+
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
                     state.skinTone = result.skin_tone;
                     state.rgb = result.rgb;
                     state.colorHex = result.color_hex;
-                    
+
                     updateAnalysisSection();
                     goToStep(3);
                 } else {
-                    showToast(result.message, 'error');
                     previewContainer.classList.add('active');
+                    if (result.error_type === 'blur') {
+                        blurErrorText.textContent = result.message;
+                        blurBanner.style.display = 'block';
+                    } else {
+                        showToast(result.message, 'error');
+                    }
                 }
             } catch (err) {
                 showToast('Error analyzing image. Please try again.', 'error');
                 previewContainer.classList.add('active');
             }
-            
+
             analyzeLoader.classList.remove('active');
         });
 

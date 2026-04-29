@@ -15,7 +15,7 @@ from datetime import datetime
 import random
 
 app = Flask(__name__)
-app.secret_key = 'smart_fashion_advisor_2024'
+app.secret_key = os.environ.get('SECRET_KEY', 'smart_fashion_advisor_2024')
 
 # Try to import Gemini AI (optional)
 try:
@@ -503,7 +503,7 @@ def get_ai_response(user_message, context):
     """Get AI chatbot response using Gemini or fallback"""
     if GEMINI_AVAILABLE and GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel('gemini-pro')
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
             system_prompt = f"""You are a friendly and knowledgeable fashion advisor chatbot. 
             The user's details:
