@@ -1651,6 +1651,80 @@
             border-color: var(--secondary);
         }
 
+        .evaluation-panel {
+            margin: 18px 0 30px;
+            display: grid;
+            gap: 18px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .metric-card {
+            background: var(--bg-light);
+            border: 2px solid var(--bg-dark);
+            border-radius: 14px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .metric-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .metric-value {
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: var(--accent);
+        }
+
+        .evaluation-details {
+            background: var(--bg-light);
+            border: 2px dashed var(--primary);
+            border-radius: 14px;
+            padding: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .evaluation-graph {
+            width: 100%;
+            max-height: 320px;
+            object-fit: contain;
+            border-radius: 12px;
+            border: 2px solid var(--bg-light);
+            background: #ffffff;
+            padding: 8px;
+        }
+
+        .trace-list {
+            max-height: 300px;
+            overflow-y: auto;
+            display: grid;
+            gap: 8px;
+            padding-right: 4px;
+        }
+
+        .trace-item {
+            background: var(--bg-light);
+            border-left: 4px solid var(--secondary);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 0.86rem;
+            line-height: 1.45;
+            color: var(--text-secondary);
+        }
+
+        .trace-item strong {
+            color: var(--text-primary);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .header h1 {
@@ -1794,6 +1868,104 @@
             border-left: 5px solid #ef4444;
             border-radius: 18px;
         }
+
+        /* Skeleton loaders */
+        @keyframes shimmer {
+            0% { background-position: -400px 0; }
+            100% { background-position: 400px 0; }
+        }
+
+        .skeleton {
+            background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-light) 50%, var(--bg-card) 75%);
+            background-size: 800px 100%;
+            animation: shimmer 1.4s infinite linear;
+            border-radius: 12px;
+        }
+
+        .skeleton-card {
+            height: 240px;
+            border-radius: 20px;
+        }
+
+        .skeleton-row {
+            height: 18px;
+            margin: 8px 0;
+            border-radius: 8px;
+        }
+
+        .skeleton-row.short { width: 60%; }
+
+        /* Chat typing indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            padding: 12px 18px;
+            background: var(--bg-light);
+            border-radius: 18px 18px 18px 4px;
+            width: fit-content;
+            margin-bottom: 12px;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--primary);
+            animation: typing-bounce 1.2s ease-in-out infinite;
+        }
+
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing-bounce {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+            30% { transform: translateY(-6px); opacity: 1; }
+        }
+
+        /* Skin-tone reveal animation */
+        @keyframes swatch-reveal {
+            0% { transform: scale(0.5); opacity: 0; box-shadow: 0 0 0 0 var(--primary); }
+            60% { transform: scale(1.12); }
+            80% { box-shadow: 0 0 0 20px transparent; }
+            100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 transparent; }
+        }
+
+        .color-swatch.revealed {
+            animation: swatch-reveal 0.7s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* Share card button */
+        .share-card-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: var(--gradient);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 18px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 20px rgba(108, 92, 231, 0.4);
+        }
+
+        .share-card-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(108, 92, 231, 0.5);
+        }
+
+        /* Reduce motion for accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1932,10 +2104,6 @@
 
                 <div class="preview-container" id="preview-container">
                     <img id="preview-image" src="" alt="Preview">
-                    <div id="blur-error-banner" style="display:none; margin: 14px auto 0; max-width: 420px; background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.5); border-radius: 10px; padding: 12px 16px; color: #ff6b7a; font-size: 0.9rem; text-align: center;">
-                        <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
-                        <span id="blur-error-text"></span>
-                    </div>
                     <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px;">
                         <button class="btn btn-primary" id="btn-analyze">
                             <i class="fas fa-magic"></i> Analyze Skin Tone
@@ -1969,6 +2137,9 @@
                     <span class="undertone-badge" id="undertone-badge">Warm</span>
                     <span class="season-badge" id="season-badge">Autumn</span>
                 </div>
+                <button class="share-card-btn" onclick="downloadStyleCard()">
+                    <i class="fas fa-download"></i> Save Style Card
+                </button>
             </div>
 
             <!-- Color Theory Card -->
@@ -2374,7 +2545,25 @@
             fileInput.click();
         });
 
-        fileInput.addEventListener('change', (e) => {
+        async function resizeImageFile(file, maxDim = 800) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.width * scale);
+                    canvas.height = Math.round(img.height * scale);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('resize failed')); };
+                img.src = url;
+            });
+        }
+
+        fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
                 // Validate file type
@@ -2382,25 +2571,23 @@
                     showToast('Please select an image file.', 'error');
                     return;
                 }
-                
+
                 // Validate file size (max 10MB)
                 if (file.size > 10 * 1024 * 1024) {
                     showToast('Image is too large. Please select an image under 10MB.', 'error');
                     return;
                 }
-                
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    state.imageData = event.target.result;
+
+                try {
+                    const resized = await resizeImageFile(file, 800);
+                    state.imageData = resized;
                     previewImage.src = state.imageData;
                     previewContainer.classList.add('active');
                     document.querySelector('.photo-options').style.display = 'none';
                     showToast('Photo loaded! Click "Analyze Skin Tone" to continue.', 'success');
-                };
-                reader.onerror = () => {
+                } catch {
                     showToast('Error reading file. Please try again.', 'error');
-                };
-                reader.readAsDataURL(file);
+                }
             }
         });
 
@@ -2447,8 +2634,6 @@
             previewContainer.classList.remove('active');
             document.querySelector('.photo-options').style.display = 'grid';
             fileInput.value = '';
-            // Clear blur error if it was showing
-            document.getElementById('blur-error-banner').style.display = 'none';
         });
 
         function stopCamera() {
@@ -2469,47 +2654,37 @@
 
         btnAnalyze.addEventListener('click', async () => {
             if (!state.imageData) return;
-
-            // Clear any previous blur error
-            const blurBanner = document.getElementById('blur-error-banner');
-            const blurErrorText = document.getElementById('blur-error-text');
-            blurBanner.style.display = 'none';
-
+            
             previewContainer.classList.remove('active');
             analyzeLoader.classList.add('active');
-
+            
             try {
                 const formData = new FormData();
                 formData.append('image_data', state.imageData);
-
+                
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     body: formData
                 });
-
+                
                 const result = await response.json();
-
+                
                 if (result.success) {
                     state.skinTone = result.skin_tone;
                     state.rgb = result.rgb;
                     state.colorHex = result.color_hex;
-
+                    
                     updateAnalysisSection();
                     goToStep(3);
                 } else {
+                    showToast(result.message, 'error');
                     previewContainer.classList.add('active');
-                    if (result.error_type === 'blur') {
-                        blurErrorText.textContent = result.message;
-                        blurBanner.style.display = 'block';
-                    } else {
-                        showToast(result.message, 'error');
-                    }
                 }
             } catch (err) {
                 showToast('Error analyzing image. Please try again.', 'error');
                 previewContainer.classList.add('active');
             }
-
+            
             analyzeLoader.classList.remove('active');
         });
 
@@ -2546,8 +2721,29 @@
 
         // Analysis Section
         function updateAnalysisSection() {
-            document.getElementById('skin-color-swatch').style.backgroundColor = state.colorHex;
+            const swatch = document.getElementById('skin-color-swatch');
+            swatch.style.backgroundColor = state.colorHex;
+            swatch.classList.remove('revealed');
+            // Force reflow so re-adding the class triggers animation
+            void swatch.offsetWidth;
+            swatch.classList.add('revealed');
             document.getElementById('skin-tone-badge').textContent = state.skinTone;
+
+            // Adapt chatbot suggestion chips to the detected skin tone
+            const chips = document.querySelectorAll('.suggestion-chip');
+            const tone = state.skinTone || 'Medium';
+            const chipMessages = [
+                { label: 'My Colors', msg: `What colors suit ${tone} skin tone?` },
+                { label: 'Party Look', msg: `Best party outfit for ${tone} skin?` },
+                { label: 'Interview', msg: 'What to wear for an interview?' },
+                { label: 'Casual', msg: `Casual outfit ideas for ${tone} skin` }
+            ];
+            chips.forEach((chip, i) => {
+                if (chipMessages[i]) {
+                    chip.textContent = chipMessages[i].label;
+                    chip.dataset.message = chipMessages[i].msg;
+                }
+            });
             
             fetch('/api/recommendations', {
                 method: 'POST',
@@ -2659,6 +2855,7 @@
                 
                 if (data.success) {
                     renderOutfits(data.outfits);
+                    renderEvaluation(data.evaluation, data.execution_trace);
                 }
             } catch (err) {
                 showToast('Error loading recommendations.', 'error');
@@ -2666,6 +2863,42 @@
             
             loader.classList.remove('active');
             container.style.display = 'block';
+        }
+
+        function renderEvaluation(evaluation = {}, trace = []) {
+            const metrics = evaluation.metrics || {};
+            const toMetricText = (value) => (typeof value === 'number' ? value.toFixed(4) : '-');
+            document.getElementById('metric-accuracy').textContent = toMetricText(metrics.accuracy);
+            document.getElementById('metric-precision').textContent = toMetricText(metrics.precision);
+            document.getElementById('metric-recall').textContent = toMetricText(metrics.recall);
+            document.getElementById('metric-f1').textContent = toMetricText(metrics.f1_score);
+
+            const details = evaluation.detailed_text || 'No detailed evaluation text available for this run.';
+            document.getElementById('evaluation-details').textContent = details;
+
+            const graph = document.getElementById('metrics-graph');
+            if (evaluation.graph_base64) {
+                graph.src = `data:image/png;base64,${evaluation.graph_base64}`;
+                graph.style.display = 'block';
+            } else {
+                graph.style.display = 'none';
+                graph.removeAttribute('src');
+            }
+
+            const traceList = document.getElementById('trace-list');
+            if (!Array.isArray(trace) || trace.length === 0) {
+                traceList.innerHTML = '<div class="trace-item">No execution trace captured for this request.</div>';
+                return;
+            }
+
+            traceList.innerHTML = trace.map(step => {
+                const sequence = step.sequence ?? '-';
+                const fn = step.function || 'unknown_function';
+                const stepType = step.step || 'step';
+                const why = step.why || '';
+                const output = step.output ? ` | output: ${step.output}` : '';
+                return `<div class="trace-item"><strong>#${sequence}</strong> ${fn} (${stepType})<br>${why}${output}</div>`;
+            }).join('');
         }
 
         function renderOutfits(outfits) {
@@ -2752,13 +2985,17 @@
 
         async function sendMessage(message) {
             if (!message.trim()) return;
-            
-            // Add user message
+
             chatMessages.innerHTML += `<div class="message user">${message}</div>`;
             chatInput.value = '';
+
+            const typingId = 'typing-' + Date.now();
+            chatMessages.innerHTML += `
+                <div id="${typingId}" class="typing-indicator">
+                    <span></span><span></span><span></span>
+                </div>`;
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            
-            // Get bot response
+
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
@@ -2770,16 +3007,18 @@
                         skin_tone: state.skinTone || 'Medium'
                     })
                 });
-                
+
                 const data = await response.json();
-                
+                document.getElementById(typingId)?.remove();
+
                 if (data.success) {
                     chatMessages.innerHTML += `<div class="message bot">${data.response}</div>`;
                 }
             } catch (err) {
+                document.getElementById(typingId)?.remove();
                 chatMessages.innerHTML += `<div class="message bot">Sorry, I'm having trouble responding right now. Please try again!</div>`;
             }
-            
+
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
@@ -2802,6 +3041,82 @@
             toast.className = `toast show ${type}`;
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
+
+        // Download style card as PNG
+        function downloadStyleCard() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 600;
+            canvas.height = 400;
+            const ctx = canvas.getContext('2d');
+
+            // Background
+            ctx.fillStyle = '#141420';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Title
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 28px Nunito, sans-serif';
+            ctx.fillText('My Style Profile', 30, 50);
+
+            ctx.fillStyle = '#a0a0b0';
+            ctx.font = '16px Nunito, sans-serif';
+            ctx.fillText(`${state.name || 'Your'} Color Palette`, 30, 78);
+
+            // Skin swatch
+            ctx.fillStyle = state.colorHex || '#c8a882';
+            ctx.beginPath();
+            ctx.arc(80, 160, 55, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 16px Nunito, sans-serif';
+            ctx.fillText(state.skinTone || 'Medium', 30, 240);
+            ctx.fillStyle = '#a0a0b0';
+            ctx.font = '13px Nunito, sans-serif';
+            ctx.fillText('Skin Tone', 30, 260);
+
+            // Best colors
+            const bestColors = SKIN_TONE_COLORS_JS[state.skinTone] || [];
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 15px Nunito, sans-serif';
+            ctx.fillText('Best Colors', 200, 120);
+
+            bestColors.slice(0, 5).forEach((name, i) => {
+                const x = 200 + i * 68;
+                const hex = colorNameToHex[name.toLowerCase()] || '#808080';
+                ctx.fillStyle = hex;
+                ctx.beginPath();
+                ctx.arc(x + 28, 155, 24, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#a0a0b0';
+                ctx.font = '10px Nunito, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(name.split(' ')[0], x + 28, 195);
+                ctx.textAlign = 'left';
+            });
+
+            // Footer
+            ctx.fillStyle = '#6c5ce7';
+            ctx.fillRect(0, 360, 600, 40);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '13px Nunito, sans-serif';
+            ctx.fillText('Smart Fashion Advisor  •  AI-powered style for you', 20, 385);
+
+            const link = document.createElement('a');
+            link.download = 'my-style-card.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Expose palette to downloadStyleCard
+        const SKIN_TONE_COLORS_JS = {
+            'Fair': ['Navy Blue','Burgundy','Emerald','Plum','Charcoal'],
+            'Light': ['Coral','Peach','Aqua','Soft Pink','Light Blue'],
+            'Medium': ['Olive','Rust','Mustard','Teal','Terracotta'],
+            'Olive': ['Orange','Gold','Amber','Rust','Coral'],
+            'Brown': ['White','Cream','Gold','Orange','Coral'],
+            'Dark': ['White','Bright Yellow','Orange','Fuchsia','Cobalt Blue']
+        };
     </script>
 </body>
 </html>

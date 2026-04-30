@@ -77,6 +77,20 @@ An AI-powered personal stylist application that combines skin tone detection, ou
    http://localhost:5000
    ```
 
+## Deploy on Railway
+
+1. Push this project to GitHub.
+2. In Railway, create a new project and choose **Deploy from GitHub repo**.
+3. Add environment variable in Railway:
+   - `GEMINI_API_KEY=your_key` (optional for chatbot enhancement)
+4. Railway will auto-detect the `Procfile` and run:
+   - `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180`
+5. After deploy, open the generated Railway domain URL.
+
+Notes:
+- `data/styles.csv` and `data/images.csv` must be present in the deployed repo.
+- First boot can be slower because MediaPipe and dataset loading happen at startup.
+
 ## Usage Guide
 
 1. **Step 1 - Profile**: Enter your name and select your gender

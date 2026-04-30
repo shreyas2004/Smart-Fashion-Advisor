@@ -11,11 +11,103 @@ import cv2
 import pandas as pd
 from flask import Flask, render_template, request, jsonify, session
 import mediapipe as mp
-from datetime import datetime
+from datetime import datetime, timezone
 import random
+import logging
+import traceback
+from functools import wraps
+from dotenv import load_dotenv
+
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except Exception:
+    MATPLOTLIB_AVAILABLE = False
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'smart_fashion_advisor_2024')
+app.secret_key = 'smart_fashion_advisor_2024'
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+LOGGER = logging.getLogger("smart_fashion_advisor")
+load_dotenv()
+
+
+EXECUTION_TRACE = []
+TRACE_SEQ = 0
+
+FUNCTION_INTENT = {
+    'analyze_image': 'Decodes uploaded image and starts skin tone analysis.',
+    'process_image': 'Detects face regions and classifies skin tone from HSV values.',
+    'classify_skin_tone': 'Maps HSV values to skin-tone categories using threshold scoring.',
+    'get_recommendations': 'Builds personalized outfit recommendation response.',
+    'get_scored_fashion_candidates': 'Filters candidate catalog and assigns color suitability score.',
+    'get_recommended_outfits': 'Categorizes best-scored products into outfit groups.',
+    'evaluate_recommendation_quality': 'Computes recommendation quality metrics against internal relevance labels.',
+    'build_metrics_plot_base64': 'Generates visualization for accuracy/precision/recall/F1 metrics.',
+    'chat': 'Answers fashion chat queries using Gemini or fallback logic.',
+    'get_ai_response': 'Routes chat prompt through AI service or fallback function.',
+    'get_fallback_response': 'Returns rule-based fashion advice when API is unavailable.'
+}
+
+
+def _safe_repr(data, max_len=280):
+    try:
+        text = repr(data)
+    except Exception:
+        text = '<unrepr-able>'
+    return text if len(text) <= max_len else f"{text[:max_len]}...<truncated>"
+
+
+def log_step(function_name, step_type, input_data=None, output_data=None, reason=None, error=None):
+    """Store ordered trace events and mirror to standard logger."""
+    global TRACE_SEQ
+    TRACE_SEQ += 1
+    message = {
+        'sequence': TRACE_SEQ,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'function': function_name,
+        'step': step_type,
+        'what': FUNCTION_INTENT.get(function_name, 'Function execution event.'),
+        'input': _safe_repr(input_data) if input_data is not None else None,
+        'output': _safe_repr(output_data) if output_data is not None else None,
+        'why': reason or 'Part of recommendation and analysis pipeline.'
+    }
+    if error:
+        message['error'] = _safe_repr(error)
+        LOGGER.error("SEQ %s | %s | %s | %s", TRACE_SEQ, function_name, step_type, error)
+    else:
+        LOGGER.info("SEQ %s | %s | %s", TRACE_SEQ, function_name, step_type)
+    EXECUTION_TRACE.append(message)
+
+
+def traced(reason):
+    """Decorator to automatically trace function input/output/error."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            log_step(func.__name__, 'start', {'args': args[1:] if args else (), 'kwargs': kwargs}, reason=reason)
+            try:
+                result = func(*args, **kwargs)
+                log_step(func.__name__, 'end', output_data=result, reason=reason)
+                return result
+            except Exception as exc:
+                log_step(
+                    func.__name__,
+                    'error',
+                    error={'message': str(exc), 'trace': traceback.format_exc()},
+                    reason=reason
+                )
+                raise
+        return wrapper
+    return decorator
+
+
+def reset_execution_trace():
+    """Clear sequence trace for a fresh request run."""
+    global TRACE_SEQ
+    EXECUTION_TRACE.clear()
+    TRACE_SEQ = 0
 
 # Try to import Gemini AI (optional)
 try:
@@ -45,9 +137,9 @@ try:
         if link.startswith('http://'):
             link = 'https://' + link[7:]
         image_urls[filename] = link
-    print(f"Loaded {len(image_urls)} image URLs")
+    LOGGER.info("Loaded %d image URLs", len(image_urls))
 except Exception as e:
-    print(f"Error loading images: {e}")
+    LOGGER.warning("Error loading images: %s", e)
 
 try:
     fashion_data = pd.read_csv(DATASET_PATH, on_bad_lines='skip')
@@ -60,11 +152,10 @@ try:
     # Exclude inappropriate categories
     fashion_data = fashion_data[~fashion_data['subcategory'].isin(['Innerwear', 'Loungewear and Nightwear', 'Socks'])]
     fashion_data.dropna(subset=['gender', 'mastercategory', 'basecolour'], inplace=True)
-    print(f"Loaded {len(fashion_data)} fashion items")
-    # Print available subcategories for debugging
-    print(f"Available subcategories: {fashion_data['subcategory'].unique().tolist()[:20]}...")
+    LOGGER.info("Loaded %d fashion items", len(fashion_data))
+    LOGGER.debug("Available subcategories: %s", fashion_data['subcategory'].unique().tolist()[:20])
 except Exception as e:
-    print(f"Error loading dataset: {e}")
+    LOGGER.error("Error loading dataset: %s", e)
     fashion_data = pd.DataFrame()
 
 # Enhanced Color Theory Based on Skin Tone Analysis
@@ -162,35 +253,6 @@ OCCASION_STYLES = {
     'work': ['Formal', 'Smart Casual']
 }
 
-# Blur detection threshold (Laplacian variance). Images with a score below
-# this value are considered too blurry for reliable skin-tone analysis.
-# Webcam captures (640×480, JPEG-compressed) score lower than high-res uploads
-# even when sharp, so 60 is chosen to avoid false positives on camera captures
-# while still rejecting genuinely blurry images (which typically score < 40).
-# Tune this constant if needed — lower values are more lenient, higher stricter.
-BLUR_THRESHOLD = 60
-
-# Normalise images wider than this before computing the blur score so that
-# very high-resolution uploads don't skew results relative to webcam frames.
-_BLUR_NORM_WIDTH = 800
-
-
-def check_image_blur(img):
-    """Return (is_blurry, score) using the Laplacian variance method.
-
-    A low variance means the image has few edges, i.e. it is blurry.
-    Large images are resized down to _BLUR_NORM_WIDTH before scoring so the
-    metric is comparable across webcam captures and high-res file uploads.
-    """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape[:2]
-    if w > _BLUR_NORM_WIDTH:
-        scale = _BLUR_NORM_WIDTH / w
-        gray = cv2.resize(gray, (_BLUR_NORM_WIDTH, int(h * scale)),
-                          interpolation=cv2.INTER_AREA)
-    score = cv2.Laplacian(gray, cv2.CV_64F).var()
-    return score < BLUR_THRESHOLD, score
-
 
 class HeadlessSkinToneDetector:
     """Skin tone detector that works with uploaded images"""
@@ -203,15 +265,6 @@ class HeadlessSkinToneDetector:
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.6)
-        
-        self.skin_tone_categories = {
-            'Fair': {'h_min': 0, 'h_max': 20, 's_min': 20, 's_max': 60, 'v_min': 80, 'v_max': 200},
-            'Light': {'h_min': 0, 'h_max': 25, 's_min': 30, 's_max': 80, 'v_min': 70, 'v_max': 180},
-            'Medium': {'h_min': 0, 'h_max': 25, 's_min': 40, 's_max': 100, 'v_min': 60, 'v_max': 160},
-            'Olive': {'h_min': 15, 'h_max': 35, 's_min': 50, 's_max': 120, 'v_min': 50, 'v_max': 140},
-            'Brown': {'h_min': 0, 'h_max': 25, 's_min': 60, 's_max': 140, 'v_min': 40, 'v_max': 120},
-            'Dark': {'h_min': 0, 'h_max': 25, 's_min': 80, 's_max': 180, 'v_min': 20, 'v_max': 80}
-        }
 
     def normalize_lighting(self, frame):
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
@@ -220,6 +273,14 @@ class HeadlessSkinToneDetector:
         l = clahe.apply(l)
         lab_normalized = cv2.merge([l, a, b])
         return cv2.cvtColor(lab_normalized, cv2.COLOR_LAB2BGR)
+
+    def gray_world_white_balance(self, bgr_image):
+        avg = bgr_image.mean(axis=(0, 1)).astype(np.float32)
+        if 0.0 in avg:
+            return bgr_image
+        gray = avg.mean()
+        scale = gray / avg
+        return np.clip(bgr_image.astype(np.float32) * scale, 0, 255).astype(np.uint8)
 
     def check_lighting_quality(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -275,66 +336,70 @@ class HeadlessSkinToneDetector:
                 all_skin_pixels_hsv.extend(skin_pixels_hsv)
         
         if len(all_skin_pixels) > 0:
-            avg_bgr = np.mean(all_skin_pixels, axis=0)
+            pix_arr = np.array(all_skin_pixels, dtype=np.float32)
+            if len(pix_arr) > 10:
+                brightness = pix_arr.mean(axis=1)
+                lo, hi = np.percentile(brightness, [20, 80])
+                mask = (brightness >= lo) & (brightness <= hi)
+                pix_arr = pix_arr[mask] if mask.any() else pix_arr
+            avg_bgr = pix_arr.mean(axis=0)
             avg_rgb = avg_bgr[::-1]
             avg_hsv = np.mean(all_skin_pixels_hsv, axis=0)
             return avg_rgb, avg_hsv
         return None, None
 
-    def classify_skin_tone(self, hsv_values):
-        print(hsv_values)
-        if hsv_values is None:
+    @traced("Classifies skin RGB values into skin-tone label using ITA metric.")
+    def classify_skin_tone(self, rgb_values):
+        if rgb_values is None:
             return "Medium"
-        
-        h, s, v = hsv_values
-        category_scores = {}
-        
-        for category, thresholds in self.skin_tone_categories.items():
-            h_score = 1.0 if thresholds['h_min'] <= h <= thresholds['h_max'] else 0.0
-            s_score = 1.0 if thresholds['s_min'] <= s <= thresholds['s_max'] else 0.0
-            v_score = 1.0 if thresholds['v_min'] <= v <= thresholds['v_max'] else 0.0
-            total_score = (h_score * 0.4) + (s_score * 0.4) + (v_score * 0.2)
-            category_scores[category] = total_score
-        
-        best_category = max(category_scores, key=category_scores.get)
-        best_score = category_scores[best_category]
-        
-        if best_score < 0.6:
-            if h <= 15 and s <= 50:
-                return "Fair"
-            elif h <= 20 and s <= 70:
-                return "Light"
-            elif h <= 25 and s <= 100:
-                return "Medium"
-            elif 15 <= h <= 35 and s >= 50:
-                return "Olive"
-            elif h <= 25 and s >= 80:
-                return "Brown"
-            else:
-                return "Dark"
-        return best_category
 
+        import math
+        r, g, b = rgb_values
+        pixel = np.array([[[int(r), int(g), int(b)]]], dtype=np.uint8)
+        lab = cv2.cvtColor(pixel, cv2.COLOR_RGB2Lab)[0, 0]
+        # OpenCV Lab encoding: L [0,255]→L*[0,100], b-channel [0,255]→b*[-128,127]
+        l_star = lab[0] * 100.0 / 255.0
+        b_star = float(lab[2]) - 128.0
+        ita = math.degrees(math.atan2(l_star - 50.0, b_star))
+        LOGGER.debug("ITA=%.1f L*=%.1f b*=%.1f RGB=(%d,%d,%d)", ita, l_star, b_star, r, g, b)
+
+        if ita > 55:
+            return "Fair"
+        elif ita > 41:
+            return "Light"
+        elif ita > 28:
+            return "Medium"
+        elif ita > 10:
+            return "Olive"
+        elif ita > -30:
+            return "Brown"
+        else:
+            return "Dark"
+
+    @traced("Processes uploaded image and returns skin tone with color hex.")
     def process_image(self, bgr_image):
         lighting_ok = self.check_lighting_quality(bgr_image)
         if not lighting_ok:
             return {"success": False, "message": "Lighting conditions are not optimal. Please try with better lighting."}
-        
-        rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+
+        balanced = self.gray_world_white_balance(bgr_image)
+        rgb_image = cv2.cvtColor(balanced, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb_image)
-        
+
         if not results.multi_face_landmarks:
             return {"success": False, "message": "No face detected. Please ensure your face is clearly visible."}
-        
+
         landmarks = results.multi_face_landmarks[0]
-        skin_regions = self.get_skin_regions(landmarks, bgr_image.shape)
-        rgb_vals, hsv_vals = self.extract_skin_color(bgr_image, skin_regions)
-        
+        skin_regions = self.get_skin_regions(landmarks, balanced.shape)
+        rgb_vals, hsv_vals = self.extract_skin_color(balanced, skin_regions)
+
         if rgb_vals is None:
             return {"success": False, "message": "Could not extract skin tone. Please try with a clearer photo."}
-        
-        skin_tone = self.classify_skin_tone(hsv_vals)
+
+        LOGGER.debug("Balanced image shape=%s", balanced.shape)
+        skin_tone = self.classify_skin_tone(rgb_vals)
         rgb_list = [int(x) for x in np.round(rgb_vals).tolist()]
-        
+
         return {
             "success": True,
             "skin_tone": skin_tone,
@@ -346,48 +411,96 @@ class HeadlessSkinToneDetector:
 # Initialize detector
 detector = HeadlessSkinToneDetector()
 
+# Pre-score the fashion catalog for every (skin_tone, gender) combination at startup
+# so recommendation calls are O(1) lookups instead of full catalog scans.
+_SCORED_CATALOG_CACHE: dict = {}
 
-def get_recommended_outfits(skin_tone, gender, occasion=None, season=None, limit=20):
-    """Get outfit recommendations based on skin tone and preferences"""
+
+def _build_scored_catalog_cache():
     if fashion_data.empty:
-        return {'topwear': [], 'bottomwear': [], 'footwear': [], 'dress': []}
-    
-    recommended_colors = SKIN_TONE_COLORS.get(skin_tone, SKIN_TONE_COLORS['Medium'])
-    
-    # Filter by gender
+        return
     gender_map = {'male': 'Men', 'female': 'Women'}
-    target_gender = gender_map.get(gender.lower(), 'Men')
-    filtered_data = fashion_data[fashion_data['gender'] == target_gender]
-    
-    # Filter by occasion/usage
+    for skin_tone, palette in SKIN_TONE_COLORS.items():
+        for gender, target_gender in gender_map.items():
+            filtered = fashion_data[fashion_data['gender'] == target_gender].copy()
+
+            def _score(color, p=palette):
+                if pd.isna(color):
+                    return 0
+                c = str(color).lower()
+                for rec in p['best']:
+                    if rec.lower() in c or c in rec.lower():
+                        return 3
+                for rec in p['good']:
+                    if rec.lower() in c or c in rec.lower():
+                        return 2
+                for avoid in p['avoid']:
+                    if avoid.lower() in c or c in avoid.lower():
+                        return 0
+                return 1
+
+            filtered['color_score'] = filtered['basecolour'].apply(_score)
+            filtered['relevant'] = (filtered['color_score'] >= 2).astype(int)
+            filtered = filtered.sort_values('color_score', ascending=False)
+            _SCORED_CATALOG_CACHE[(skin_tone, gender)] = filtered
+
+    LOGGER.info("Pre-scored catalog for %d (skin_tone, gender) combinations", len(_SCORED_CATALOG_CACHE))
+
+
+_build_scored_catalog_cache()
+
+
+@traced("Prepares filtered fashion dataset with computed color scores.")
+def get_scored_fashion_candidates(skin_tone, gender, occasion=None, season=None):
+    """Return scored candidate items for recommendation and evaluation."""
+    if fashion_data.empty:
+        return pd.DataFrame()
+
+    cache_key = (skin_tone, gender.lower())
+    if cache_key in _SCORED_CATALOG_CACHE:
+        filtered_data = _SCORED_CATALOG_CACHE[cache_key].copy()
+    else:
+        recommended_colors = SKIN_TONE_COLORS.get(skin_tone, SKIN_TONE_COLORS['Medium'])
+        gender_map = {'male': 'Men', 'female': 'Women'}
+        target_gender = gender_map.get(gender.lower(), 'Men')
+        filtered_data = fashion_data[fashion_data['gender'] == target_gender].copy()
+
+        def color_score(color):
+            if pd.isna(color):
+                return 0
+            color = str(color).lower()
+            for rec in recommended_colors['best']:
+                if rec.lower() in color or color in rec.lower():
+                    return 3
+            for rec in recommended_colors['good']:
+                if rec.lower() in color or color in rec.lower():
+                    return 2
+            for avoid in recommended_colors['avoid']:
+                if avoid.lower() in color or color in avoid.lower():
+                    return 0
+            return 1
+
+        filtered_data['color_score'] = filtered_data['basecolour'].apply(color_score)
+        filtered_data['relevant'] = (filtered_data['color_score'] >= 2).astype(int)
+        filtered_data = filtered_data.sort_values('color_score', ascending=False)
+
     if occasion and occasion in OCCASION_STYLES:
         target_usages = OCCASION_STYLES[occasion]
         filtered_data = filtered_data[filtered_data['usage'].isin(target_usages)]
-    
-    # Filter by season
+
     if season:
         filtered_data = filtered_data[filtered_data['season'].str.lower() == season.lower()]
-    
-    # Score items by color match
-    def color_score(color):
-        if pd.isna(color):
-            return 0
-        color = str(color).lower()
-        for rec in recommended_colors['best']:
-            if rec.lower() in color or color in rec.lower():
-                return 3
-        for rec in recommended_colors['good']:
-            if rec.lower() in color or color in rec.lower():
-                return 2
-        for avoid in recommended_colors['avoid']:
-            if avoid.lower() in color or color in avoid.lower():
-                return 0
-        return 1
-    
-    filtered_data = filtered_data.copy()
-    filtered_data['color_score'] = filtered_data['basecolour'].apply(color_score)
-    filtered_data = filtered_data[filtered_data['color_score'] > 0]
-    filtered_data = filtered_data.sort_values('color_score', ascending=False)
+
+    return filtered_data
+
+
+@traced("Generates product-level recommendations grouped by outfit categories.")
+def get_recommended_outfits(skin_tone, gender, occasion=None, season=None, limit=20):
+    """Get outfit recommendations based on skin tone and preferences"""
+    scored_data = get_scored_fashion_candidates(skin_tone, gender, occasion, season)
+    if scored_data.empty:
+        return {'topwear': [], 'bottomwear': [], 'footwear': [], 'dress': []}
+    filtered_data = scored_data[scored_data['color_score'] > 0]
     
     # Expanded categories for diverse recommendations
     results = {
@@ -411,7 +524,7 @@ def get_recommended_outfits(skin_tone, gender, occasion=None, season=None, limit
         'accessories': ['watch', 'belt', 'bag', 'wallet', 'scarf', 'tie', 'cap', 'hat', 'sunglasses', 'jewellery']
     }
     
-    for _, row in filtered_data.iterrows():
+    for idx, row in filtered_data.iterrows():
         subcategory = str(row.get('subcategory', '')).lower()
         articletype = str(row.get('articletype', '')).lower()
         item_id = int(row['id']) if pd.notna(row['id']) else 0
@@ -431,6 +544,7 @@ def get_recommended_outfits(skin_tone, gender, occasion=None, season=None, limit
         color_match = 'Best Match' if row.get('color_score', 0) == 3 else 'Good Match' if row.get('color_score', 0) == 2 else 'Compatible'
         
         item = {
+            'source_index': int(idx),
             'id': item_id,
             'name': product_name,
             'type': str(row.get('articletype', 'Unknown')),
@@ -499,11 +613,12 @@ def get_recommended_outfits(skin_tone, gender, occasion=None, season=None, limit
     return results
 
 
+@traced("Produces chatbot answer via Gemini or fallback path.")
 def get_ai_response(user_message, context):
     """Get AI chatbot response using Gemini or fallback"""
     if GEMINI_AVAILABLE and GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             system_prompt = f"""You are a friendly and knowledgeable fashion advisor chatbot. 
             The user's details:
@@ -522,11 +637,12 @@ def get_ai_response(user_message, context):
             response = model.generate_content(full_prompt)
             return response.text
         except Exception as e:
-            print(f"Gemini API error: {e}")
-    
+            LOGGER.warning("Gemini API error, falling back to rule-based: %s", e)
+
     return get_fallback_response(user_message, context)
 
 
+@traced("Generates deterministic response when external AI is unavailable.")
 def get_fallback_response(user_message, context):
     """Provide intelligent fallback responses when API is unavailable"""
     user_message = user_message.lower()
@@ -604,18 +720,16 @@ def get_fallback_response(user_message, context):
 
 
 # Flask Routes
-@app.route('/health')
-def health():
-    return 'OK', 200
-
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
     return render_template('index.html')
 
 
 @app.route('/api/analyze', methods=['POST'])
+@traced("API entrypoint for image upload analysis.")
 def analyze_image():
     """Analyze uploaded image for skin tone"""
+    reset_execution_trace()
     if 'image' not in request.files and 'image_data' not in request.form:
         return jsonify({'success': False, 'message': 'No image provided'}), 400
     
@@ -636,20 +750,10 @@ def analyze_image():
         
         if img is None:
             return jsonify({'success': False, 'message': 'Could not decode image'}), 400
-
-        # Blur detection gate — must pass before any further processing
-        is_blurry, blur_score = check_image_blur(img)
-        if is_blurry:
-            return jsonify({
-                'success': False,
-                'error_type': 'blur',
-                'message': (
-                    'The image appears to be blurry. '
-                    'Please retake or re-upload a clearer photo for accurate recommendations.'
-                )
-            }), 400
-
+        
+        print ("######## Processing img ########")
         result = detector.process_image(img)
+        print(result)
         
         if result['success']:
             session['skin_tone'] = result['skin_tone']
@@ -660,12 +764,11 @@ def analyze_image():
         return jsonify({'success': False, 'message': f'Error processing image: {str(e)}'}), 500
 
 
+@traced("Builds color-combination suggestions from skin tone palette.")
 def get_outfit_combinations(skin_tone):
     """Generate outfit color combinations based on skin tone and color theory"""
     color_palette = SKIN_TONE_COLORS.get(skin_tone, SKIN_TONE_COLORS['Medium'])
     best_colors = color_palette['best']
-    good_colors = color_palette['good']
-    
     combinations = []
     
     # Classic combinations based on color theory
@@ -753,9 +856,103 @@ def get_outfit_combinations(skin_tone):
     return combinations[:10]  # Return top 10 combinations
 
 
+@traced("Creates base64 graph for recommendation metric visualization.")
+def build_metrics_plot_base64(metrics):
+    """Create a bar chart for evaluation metrics and return base64 image."""
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+
+    labels = ['Accuracy', 'Precision', 'Recall', 'F1 Score']
+    values = [
+        metrics.get('accuracy', 0.0),
+        metrics.get('precision', 0.0),
+        metrics.get('recall', 0.0),
+        metrics.get('f1_score', 0.0)
+    ]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    bars = ax.bar(labels, values, color=['#4e79a7', '#59a14f', '#f28e2b', '#e15759'])
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('Score (0-1)')
+    ax.set_title('Recommendation Performance Metrics')
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+
+    for bar, value in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f"{value:.3f}", ha='center', va='bottom')
+
+    fig.tight_layout()
+    image_buffer = io.BytesIO()
+    fig.savefig(image_buffer, format='png', dpi=120)
+    plt.close(fig)
+    image_buffer.seek(0)
+    return base64.b64encode(image_buffer.read()).decode('utf-8')
+
+
+@traced("Computes recommendation accuracy, precision, recall and F1 with explanations.")
+def evaluate_recommendation_quality(skin_tone, gender, occasion=None, season=None, limit=20):
+    """Evaluate recommendation quality using internal relevance labels."""
+    scored_data = get_scored_fashion_candidates(skin_tone, gender, occasion, season)
+    if scored_data.empty:
+        return {
+            'metrics': {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1_score': 0.0},
+            'confusion_matrix': {'tp': 0, 'tn': 0, 'fp': 0, 'fn': 0},
+            'detailed_text': 'No fashion data available, so recommendation quality cannot be evaluated.',
+            'graph_base64': None
+        }
+
+    recommendations = get_recommended_outfits(skin_tone, gender, occasion, season, limit)
+    recommended_source_indices = set()
+    for category_items in recommendations.values():
+        for item in category_items:
+            source_idx = item.get('source_index')
+            if source_idx is not None:
+                recommended_source_indices.add(source_idx)
+
+    scored_eval = scored_data.copy()
+    scored_eval['predicted_positive'] = scored_eval.index.map(lambda idx: 1 if idx in recommended_source_indices else 0)
+    scored_eval['actual_positive'] = scored_eval['relevant']
+
+    tp = int(((scored_eval['predicted_positive'] == 1) & (scored_eval['actual_positive'] == 1)).sum())
+    tn = int(((scored_eval['predicted_positive'] == 0) & (scored_eval['actual_positive'] == 0)).sum())
+    fp = int(((scored_eval['predicted_positive'] == 1) & (scored_eval['actual_positive'] == 0)).sum())
+    fn = int(((scored_eval['predicted_positive'] == 0) & (scored_eval['actual_positive'] == 1)).sum())
+
+    total = max(tp + tn + fp + fn, 1)
+    accuracy = (tp + tn) / total
+    precision = tp / max(tp + fp, 1)
+    recall = tp / max(tp + fn, 1)
+    f1_score = (2 * precision * recall) / max((precision + recall), 1e-12)
+
+    metrics = {
+        'accuracy': round(float(accuracy), 4),
+        'precision': round(float(precision), 4),
+        'recall': round(float(recall), 4),
+        'f1_score': round(float(f1_score), 4)
+    }
+    graph_base64 = build_metrics_plot_base64(metrics)
+
+    details = (
+        f"Recommendation evaluation for skin tone '{skin_tone}' and gender '{gender}': "
+        f"From {len(scored_eval)} candidate products, {len(recommended_source_indices)} were recommended. "
+        f"True Positives={tp}, True Negatives={tn}, False Positives={fp}, False Negatives={fn}. "
+        f"Accuracy ({metrics['accuracy']}) shows overall correctness. Precision ({metrics['precision']}) indicates "
+        f"how many shown recommendations were truly relevant. Recall ({metrics['recall']}) indicates how many relevant "
+        f"products were successfully surfaced. F1 Score ({metrics['f1_score']}) balances precision and recall."
+    )
+
+    return {
+        'metrics': metrics,
+        'confusion_matrix': {'tp': tp, 'tn': tn, 'fp': fp, 'fn': fn},
+        'detailed_text': details,
+        'graph_base64': graph_base64
+    }
+
+
 @app.route('/api/recommendations', methods=['POST'])
+@traced("API entrypoint for outfit recommendation and quality evaluation.")
 def get_recommendations():
     """Get outfit recommendations"""
+    reset_execution_trace()
     data = request.json
     skin_tone = data.get('skin_tone', session.get('skin_tone', 'Medium'))
     gender = data.get('gender', 'male')
@@ -769,19 +966,24 @@ def get_recommendations():
     recommendations = get_recommended_outfits(skin_tone, gender, occasion, season)
     color_palette = SKIN_TONE_COLORS.get(skin_tone, SKIN_TONE_COLORS['Medium'])
     outfit_combinations = get_outfit_combinations(skin_tone)
+    evaluation = evaluate_recommendation_quality(skin_tone, gender, occasion, season)
     
     return jsonify({
         'success': True,
         'skin_tone': skin_tone,
         'recommended_colors': color_palette,
         'outfit_combinations': outfit_combinations,
-        'outfits': recommendations
+        'outfits': recommendations,
+        'evaluation': evaluation,
+        'execution_trace': EXECUTION_TRACE
     })
 
 
 @app.route('/api/chat', methods=['POST'])
+@traced("API entrypoint for fashion chatbot responses.")
 def chat():
     """Handle chatbot messages"""
+    reset_execution_trace()
     data = request.json
     user_message = data.get('message', '')
     
@@ -797,8 +999,25 @@ def chat():
     
     return jsonify({
         'success': True,
-        'response': response
+        'response': response,
+        'execution_trace': EXECUTION_TRACE
     })
+
+
+@app.route('/api/execution_logs', methods=['GET'])
+def get_execution_logs():
+    """Return current execution trace in ordered sequence."""
+    return jsonify({
+        'success': True,
+        'count': len(EXECUTION_TRACE),
+        'trace': EXECUTION_TRACE
+    })
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Lightweight health endpoint for Railway checks."""
+    return jsonify({'status': 'ok'}), 200
 
 
 @app.route('/api/save_profile', methods=['POST'])
@@ -811,5 +1030,5 @@ def save_profile():
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
