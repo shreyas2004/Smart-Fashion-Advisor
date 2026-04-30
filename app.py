@@ -111,16 +111,18 @@ def reset_execution_trace():
 
 # Try to import Gemini AI (optional)
 try:
-    import google.generativeai as genai
+    from google import genai as _genai_module
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
     if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
+        _gemini_client = _genai_module.Client(api_key=GEMINI_API_KEY)
         GEMINI_AVAILABLE = True
     else:
         GEMINI_AVAILABLE = False
+        _gemini_client = None
 except ImportError:
     GEMINI_AVAILABLE = False
     GEMINI_API_KEY = ''
+    _gemini_client = None
 
 # Load fashion dataset
 DATASET_PATH = os.path.join(os.path.dirname(__file__), 'data', 'styles.csv')
@@ -618,23 +620,24 @@ def get_ai_response(user_message, context):
     """Get AI chatbot response using Gemini or fallback"""
     if GEMINI_AVAILABLE and GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            
-            system_prompt = f"""You are a friendly and knowledgeable fashion advisor chatbot. 
+            system_prompt = f"""You are a friendly and knowledgeable fashion advisor chatbot.
             The user's details:
             - Name: {context.get('name', 'Friend')}
             - Gender: {context.get('gender', 'Not specified')}
             - Skin Tone: {context.get('skin_tone', 'Not analyzed yet')}
-            
+
             Best colors for their skin tone: {', '.join(SKIN_TONE_COLORS.get(context.get('skin_tone', 'Medium'), SKIN_TONE_COLORS['Medium'])['best'])}
-            
+
             Provide helpful, personalized fashion advice. Be conversational, friendly, and specific.
             If they ask about outfits for an occasion, suggest specific combinations.
             If they ask what colors suit them, explain based on their skin tone.
             Keep responses concise but informative (2-3 paragraphs max)."""
-            
+
             full_prompt = f"{system_prompt}\n\nUser: {user_message}"
-            response = model.generate_content(full_prompt)
+            response = _gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=full_prompt
+            )
             return response.text
         except Exception as e:
             LOGGER.warning("Gemini API error, falling back to rule-based: %s", e)
