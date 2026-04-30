@@ -111,18 +111,16 @@ def reset_execution_trace():
 
 # Try to import Gemini AI (optional)
 try:
-    from google import genai as _genai_module
+    import google.generativeai as genai
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
     if GEMINI_API_KEY:
-        _gemini_client = _genai_module.Client(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=GEMINI_API_KEY)
         GEMINI_AVAILABLE = True
     else:
         GEMINI_AVAILABLE = False
-        _gemini_client = None
 except ImportError:
     GEMINI_AVAILABLE = False
     GEMINI_API_KEY = ''
-    _gemini_client = None
 
 # Load fashion dataset
 DATASET_PATH = os.path.join(os.path.dirname(__file__), 'data', 'styles.csv')
@@ -634,10 +632,8 @@ def get_ai_response(user_message, context):
             Keep responses concise but informative (2-3 paragraphs max)."""
 
             full_prompt = f"{system_prompt}\n\nUser: {user_message}"
-            response = _gemini_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=full_prompt
-            )
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(full_prompt)
             return response.text
         except Exception as e:
             LOGGER.warning("Gemini API error, falling back to rule-based: %s", e)
